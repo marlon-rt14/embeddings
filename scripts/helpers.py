@@ -3,8 +3,13 @@ import openai
 import json
 from scipy.spatial import distance
 from utils.utils import print_indented
+from google import genai
+from pandas import isna
 
 MODEL = "gemini-embedding-001"
+
+# Price of gemini-embedding-001: $0.15 / 1M tokens = $0.00015 / 1k tokens
+COST_PER_1K_TOKENS = 0.00015
 
 def read_products():
     with open("products.json", 'r', encoding='utf-8') as f:
@@ -49,3 +54,43 @@ class EmbeddingClient:
             print(e)
         except AttributeError as e:
             print(e)
+            
+def create_movie_text(movie):
+    return f"""
+    Title: {movie['title']}
+    Description: {movie['description']}
+    Categories: {movie['listed_in']}
+    """
+            
+def count_tokens(api_key, texts, model=MODEL):
+    if isinstance(texts, str):
+        texts = [texts]
+
+    genai_client = genai.Client(api_key=api_key)
+    total = 0
+    for text in texts:
+        result = genai_client.models.count_tokens(model=model, contents=text)
+        total += result.total_tokens
+    return total
+
+
+def estimate_cost(api_key, texts, model=MODEL, cost_per_1k_tokens=COST_PER_1K_TOKENS):
+    total_tokens = count_tokens(api_key, texts, model=model)
+    cost = cost_per_1k_tokens * total_tokens / 1000
+    return {"total_tokens": total_tokens, "cost_usd": cost}
+
+def create_movie_metadatas(movies):
+    metadatas = []
+    for movie in movies:
+        # Chroma solo acepta str/int/float/bool: los NaN de pandas se omiten
+        # (country viene vacio en varias filas) y release_year se castea
+        # porque pandas lo entrega como numpy.int64.
+        metadata = {}
+        for key in ["type", "title", "release_year", "rating", "duration", "country"]:
+            value = movie.get(key)
+            if value is None or isna(value):
+                continue
+            metadata[key] = int(value) if key == "release_year" else str(value)
+        metadatas.append(metadata)
+    return metadatas
+
